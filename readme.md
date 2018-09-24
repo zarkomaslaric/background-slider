@@ -1,182 +1,395 @@
-# Full Screen Background Image Slider
+# YelpCamp Review System
 
-This tutorial uses HTML and CSS to create a full screen background image slider that uses a crossfade effect to transition between images. The images will be set as background-images to a modified unordered list. We'll use 5 images with 10 second intervals for a 50 second animation cycle.
+### Campgrounds index page:
+![Review System Screenshot 1](https://i.imgur.com/uRIB9hr.png)
 
-### Markup
-- Edit the `landing.ejs` page to look like the following:
+### Campground show page:
+![Review System Screenshot 2](https://i.imgur.com/jMvZX1s.png)
 
-```
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>YelpCamp</title>
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
-        <link rel="stylesheet" href="/stylesheets/landing.css">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/modernizr/2.8.3/modernizr.min.js" type="text/javascript" async></script>
-    </head>
-    <body>
-    
-    <div class="container">
-        <% if(error && error.length > 0){ %>
-            <div class="alert alert-danger" role="alert">
-                <%= error %>
-            </div>
-        <% } %>
-        <% if(success && success.length > 0){ %>
-            <div class="alert alert-success" role="alert">
-                <%= success %>
-            </div>
-        <% } %>
-    </div>
-    
-    <div id="landing-header">
- 		<h1>Welcome to YelpCamp!</h1>
-		<a href="/campgrounds" class="btn btn-lg btn-success">View All Campgrounds</a>
-    </div>
-    
-    <ul class="slideshow">
-      <li></li>
-      <li></li>
-      <li></li>
-      <li></li>
-      <li></li>
-    </ul>
+This tutorial is based on technologies that we've learned in the course - we will integrate a review system where users can give 1-5 star ratings to individual campgrounds.
 
-<% include partials/footer %>
-```
-### CSS
-- Create a new CSS file in `/public/stylesheets` named `landing.css`
-- Open `landing.css` and set the body's background-color to black
+### 1) The Review Model - see the code here: [models/review.js](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/models/review.js)
+
+First thing I focused on is the Review model that we will use for our new feature. I gave it a **rating** required field, which is an integer between 1 to 5, corresponding to the number of stars given to a campground. Also, there is a **text** field so a user can voice their opinion and explain why they gave a certain star rating.
+
+We will also associate the author id/username like we did in the original YelpCamp application (Comment model). Also, to make things more flexible, we will be saving an ObjectId reference to the campground for which the review is created.
+
+Finally, we pass a second parameter to **new mongoose.Schema** where we set timestamps to true, which is going to automatically give us **createdAt** and **updatedAt** fields for each review entry in the database.
+
+### 2) Updated Campground Model - see the code here: [models/campground.js](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/models/campground.js)
+
+To make our campground model support the new review feature, we will be adding the **reviews** ObjectId references array and **rating** which will hold the average rating for the selected campground, based on all user reviews.
 
 ```
-body {
-  background-color: #000;
+    reviews: [
+        {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Review"
+        }
+    ],
+    rating: {
+        type: Number,
+        default: 0
+    }
+```
+
+### 3) Review Routes - see the code here: [routes/reviews.js](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/routes/reviews.js)
+
+- Initially, we require everything necessary in our routes/review.js file:
+
+```
+var express = require("express");
+var router = express.Router({mergeParams: true});
+var Campground = require("../models/campground");
+var Review = require("../models/review");
+var middleware = require("../middleware");
+```
+
+- **Reviews - INDEX route**
+
+```
+// Reviews Index
+router.get("/", function (req, res) {
+    Campground.findById(req.params.id).populate({
+        path: "reviews",
+        options: {sort: {createdAt: -1}} // sorting the populated reviews array to show the latest first
+    }).exec(function (err, campground) {
+        if (err || !campground) {
+            req.flash("error", err.message);
+            return res.redirect("back");
+        }
+        res.render("reviews/index", {campground: campground});
+    });
+});
+```
+
+Basically, the idea is that the campground show page is going to show only 5 latest campground reviews, and that there is going to be a link to see all the reviews - it will lead to the reviews index route which we define here. The route will first find the campground in question, populate the ObjectId references in the reviews field and sort them by the createdAt date (newest first).
+
+- **Reviews - NEW route**
+
+```
+// Reviews New
+router.get("/new", middleware.isLoggedIn, middleware.checkReviewExistence, function (req, res) {
+    // middleware.checkReviewExistence checks if a user already reviewed the campground, only one review per user is allowed
+    Campground.findById(req.params.id, function (err, campground) {
+        if (err) {
+            req.flash("error", err.message);
+            return res.redirect("back");
+        }
+        res.render("reviews/new", {campground: campground});
+
+    });
+});
+```
+
+This is going to be a GET route which will render the new review page. We attach two middleware functions in the chain, **middleware.isLoggedIn** to check if the visitor is authenticated like we've seen before, and a new middleware function **middleware.checkReviewExistence** which also checks if the user already reviewed the campground, since we only want to allow 1 single review per user. We will go over that middleware function later below.
+
+- **Reviews - CREATE route**
+
+```
+// Reviews Create
+router.post("/", middleware.isLoggedIn, middleware.checkReviewExistence, function (req, res) {
+    //lookup campground using ID
+    Campground.findById(req.params.id).populate("reviews").exec(function (err, campground) {
+        if (err) {
+            req.flash("error", err.message);
+            return res.redirect("back");
+        }
+        Review.create(req.body.review, function (err, review) {
+            if (err) {
+                req.flash("error", err.message);
+                return res.redirect("back");
+            }
+            //add author username/id and associated campground to the review
+            review.author.id = req.user._id;
+            review.author.username = req.user.username;
+            review.campground = campground;
+            //save review
+            review.save();
+            campground.reviews.push(review);
+            // calculate the new average review for the campground
+            campground.rating = calculateAverage(campground.reviews);
+            //save campground
+            campground.save();
+            req.flash("success", "Your review has been successfully added.");
+            res.redirect('/campgrounds/' + campground._id);
+        });
+    });
+});
+```
+
+A POST route that is designed to accept the submitted form from the new page and create a new review entry in the database (we again check if user already reviewed the campground). When creating a review, we also need to recalculate and update the average campground rating, so we are also using Campground.findById() to find the campground.
+
+Most of the logic is similar to the comments POST route that we are all familiar with, with the addition of calling the **calculateAverage** function which updates the campground.rating field (we define it at the bottom of the routes file):
+
+```
+function calculateAverage(reviews) {
+    if (reviews.length === 0) {
+        return 0;
+    }
+    var sum = 0;
+    reviews.forEach(function (element) {
+        sum += element.rating;
+    });
+    return sum / reviews.length;
 }
 ```
 
-- Now we need to position the welcome text and view all campgrounds buton:
- 
-```
-#landing-header {
-  z-index: 1;
-  position: relative;
-  text-align: center;
-  padding-top: 40vh;
-}
-```
+It takes the array of populated reviews, then calculates an average rating and returns it from the function, which we then assign to **campground.rating** in our routes.
 
-- We set the z-index to 1 so all of the elements inside the landing-header div will be in front of the background images
-- The position is set to relative so we can use the z-index property; the default position value is static, which ignores z-index
-- We use text-align to center our text and button
-- We use padding-top to vertically center our div, since it's contents take up quite a bit of space we use 40vh (view height) instead of 50, this way the content looks more visually centered
-	
-- We also need to change the h1 text color to white: 
+- **Reviews - EDIT route**
 
 ```
-#landing-header h1 {
-  color: #fff;
-}
+// Reviews Edit
+router.get("/:review_id/edit", middleware.checkReviewOwnership, function (req, res) {
+    Review.findById(req.params.review_id, function (err, foundReview) {
+        if (err) {
+            req.flash("error", err.message);
+            return res.redirect("back");
+        }
+        res.render("reviews/edit", {campground_id: req.params.id, review: foundReview});
+    });
+});
 ```
 
-- The unordered list and its list items that we added to `landing.ejs` need some styling to make them fit across the entire page
-- First we'll style the unordered list:
+Review GET route for the edit page, very similar to the comment edit route - we check the review ownership and allow access if a user is indeed the author of the specific review.
+
+- **Reviews - UPDATE route**
 
 ```
-.slideshow { 
-  position: fixed;
-  width: 100%;
-  height: 100%;
-  top: 0;
-  left: 0;
-  z-index: 0;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-```
-- This will fix the ul to the window, positioning it in the top left corner and filling the entire screen by setting width and height to 100%; we set the z-index to 0 to keep the background images behind the rest of the page's content; list-style is set to none in order to hide the bullet points from the list's default styling; margin and padding are removed entirely
-
-- Now we can style all of the list items:
-
-```
-.slideshow li { 
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
-  background-size: cover;
-  background-position: 50% 50%;
-  background-repeat: no-repeat;
-  opacity: 0;
-  z-index: 0;
-  animation: imageAnimation 50s linear infinite; 
-}
+// Reviews Update
+router.put("/:review_id", middleware.checkReviewOwnership, function (req, res) {
+    Review.findByIdAndUpdate(req.params.review_id, req.body.review, {new: true}, function (err, updatedReview) {
+        if (err) {
+            req.flash("error", err.message);
+            return res.redirect("back");
+        }
+        Campground.findById(req.params.id).populate("reviews").exec(function (err, campground) {
+            if (err) {
+                req.flash("error", err.message);
+                return res.redirect("back");
+            }
+            // recalculate campground average
+            campground.rating = calculateAverage(campground.reviews);
+            //save changes
+            campground.save();
+            req.flash("success", "Your review was successfully edited.");
+            res.redirect('/campgrounds/' + campground._id);
+        });
+    });
+});
 ```
 
-- Notice the animation property at the bottom of this rule, this is how we add an animation to an element; in this case we have an animation named **imageAnimation** that lasts for **50s** (seconds), keeps **linear** timing	 (the whole animation runs at the same speed), and loops an **infinite** number of times
+The PUT route where we update our existing review. We first find it and submit the modifications, then find the related campground in question to calculate the new average, again using our custom **calculateAverage** function and assigning the result to **campground.rating**.
 
-- Each list item needs a background-image and the last four need an animation-delay (this way they all fire off one after the other in ten second intervals):
-
-```
-.slideshow li:nth-child(1) { 
-  background-image: url(http://i.imgur.com/K3mPv14.jpg) 
-}
-.slideshow li:nth-child(2) { 
-  background-image: url(http://i.imgur.com/SBEmFpv.jpg);
-  animation-delay: 10s; 
-}
-.slideshow li:nth-child(3) { 
-  background-image: url(http://i.imgur.com/emvhOnb.jpg);
-  animation-delay: 20s; 
-}
-.slideshow li:nth-child(4) { 
-  background-image: url(http://i.imgur.com/2LSMCmJ.jpg);
-  animation-delay: 30s; 
-}
-.slideshow li:nth-child(5) { 
-  background-image: url(http://i.imgur.com/TVGe0Ef.jpg);
-  animation-delay: 40s; 
-}
-```
-
-- Now we can create the keyframes for the animation:
+- **Reviews - DELETE route**
 
 ```
-@keyframes imageAnimation { 
-  0% { 
-    opacity: 0; 
-    animation-timing-function: ease-in;
-  }
-  10% {
-    opacity: 1;
-    animation-timing-function: ease-out;
-  }
-  20% {
-    opacity: 1
-  }
-  30% {
-    opacity: 0
-  }
-}
+// Reviews Delete
+router.delete("/:review_id", middleware.checkReviewOwnership, function (req, res) {
+    Review.findByIdAndRemove(req.params.review_id, function (err) {
+        if (err) {
+            req.flash("error", err.message);
+            return res.redirect("back");
+        }
+        Campground.findByIdAndUpdate(req.params.id, {$pull: {reviews: req.params.review_id}}, {new: true}).populate("reviews").exec(function (err, campground) {
+            if (err) {
+                req.flash("error", err.message);
+                return res.redirect("back");
+            }
+            // recalculate campground average
+            campground.rating = calculateAverage(campground.reviews);
+            //save changes
+            campground.save();
+            req.flash("success", "Your review was deleted successfully.");
+            res.redirect("/campgrounds/" + req.params.id);
+        });
+    });
+});
 ```
 
-- The animation will be named imageAnimation, which matches with the value from our animation property in the .slideshow (unordered list) rule
-	- From 0% to 10% (the beginning of our animation) the list item begins changing it's opacity from 0 to 1 (invisible to visible)
-	- the animation-timing-function is set to ease-in at 0% and ease-out and 10%, this makes for a more smooth fade-in (read more about this [here](https://developer.mozilla.org/en-US/docs/Web/CSS/animation-timing-function))
-	- The list item's opacity then stays at 1 until it reaches 20% at which point it fades back out, reaching 0 at 30% and staying at 0 for the remainder of the animation
-	- If we have 5 background images visible for 5 seconds each, then the time it takes to fade the image in and keep it visible is 10 seconds with a 5 second crossfade/fadeout into the next image; The entire animation cycle for all 5 images takes 50 seconds total
-	- 100% divided by 5 is 20% so each image's fadein and visibility should last 20% of the cycle; half of 20% is 10%, that is why our fade in is from 0% to 10%, then we keep it visible until 20% is reached and begin the fadeout from 20% to 30%, the 5 second fadeout overlaps the next image's 5 second fadein, which is what creates the crossfade effect
+Finally, we get to the DELETE route which gets trigerred if a user decides to delete their campground review. We also check the ownership first, then delete the campground if the check passes. Again, we need to recalculate the average campground rating because of this change, so we find the campground, use **$pull** to remove the deleted ObjectId review reference from the campground's **reviews** array and then call **calculateAverage** again to update the current rating.
 
+At the bottom, we export the router object with `module.exports = router;`
 
-- Lastly, we need to add animation support for older browsers; we've already added the modernizr CDN to our landing page's head element, now we just need the following rule in our `landing.css`:
+### 4) New middleware functions for the Review System - see the code here: [middleware/index.js](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/middleware/index.js)
+
+Make sure to require the Review model up top, in the middleware/index.js file:
+
+`var Review = require("../models/review");`
+
+As we already went over above, we will going to be adding 2 specific middleware functions for the review routes:
 
 ```
-/* Older browser support - .no-cssanimations class added by modernizr */
-.no-cssanimations .slideshow li {
-	opacity: 1;
-}
+middlewareObj.checkReviewOwnership = function(req, res, next) {
+    if(req.isAuthenticated()){
+        Review.findById(req.params.review_id, function(err, foundReview){
+            if(err || !foundReview){
+                res.redirect("back");
+            }  else {
+                // does user own the comment?
+                if(foundReview.author.id.equals(req.user._id)) {
+                    next();
+                } else {
+                    req.flash("error", "You don't have permission to do that");
+                    res.redirect("back");
+                }
+            }
+        });
+    } else {
+        req.flash("error", "You need to be logged in to do that");
+        res.redirect("back");
+    }
+};
+
+middlewareObj.checkReviewExistence = function (req, res, next) {
+    if (req.isAuthenticated()) {
+        Campground.findById(req.params.id).populate("reviews").exec(function (err, foundCampground) {
+            if (err || !foundCampground) {
+                req.flash("error", "Campground not found.");
+                res.redirect("back");
+            } else {
+                // check if req.user._id exists in foundCampground.reviews
+                var foundUserReview = foundCampground.reviews.some(function (review) {
+                    return review.author.id.equals(req.user._id);
+                });
+                if (foundUserReview) {
+                    req.flash("error", "You already wrote a review.");
+                    return res.redirect("back");
+                }
+                // if the review was not found, go to the next middleware
+                next();
+            }
+        });
+    } else {
+        req.flash("error", "You need to login first.");
+        res.redirect("back");
+    }
+};
 ```
 
-# And that's it!
-You now have a full screen background slider. If you're interested in learning more about animations with CSS checkout [this tutorial](https://webdesign.tutsplus.com/tutorials/a-beginners-introduction-to-css-animation--cms-21068)
+**checkReviewOwnership** is something that we've already seen for both campgrounds and comments routes, but **checkReviewExistence** is new - it checks if the user already reviewed the campground and disallows further actions if they did.
+
+We find the campground first, then populate the **reviews** ObjectId references field and check the each review author contained in that array with the id of the currently logged in user.
+
+To achieve that efficiently, we use the [some()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some) array method which will return true if any element of the array matches the check that we implement in its callback function (meaning a review with the currently logged in user was found). If none match the condition, it returns false and we know the user didn't already review the particular campground. We save the boolean result of some() to the **foundUserReview** variable which we use in the if statement after.
+
+### 5) Updated campground routes - see the code here: [routes/campgrounds.js](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/routes/campgrounds.js)
+
+Make sure to require the Review model up top, in the routes/campgrounds.js file:
+
+`var Review = require("../models/review");`
+
+- One of the main updates happens to the show route, where we chain another populate() method for the **reviews** field from the schema, which we also sort by the createdAt date (newest first):
+
+```
+// SHOW - shows more info about one campground
+router.get("/:id", function (req, res) {
+    //find the campground with provided ID
+    Campground.findById(req.params.id).populate("comments").populate({
+        path: "reviews",
+        options: {sort: {createdAt: -1}}
+    }).exec(function (err, foundCampground) {
+        if (err) {
+            console.log(err);
+        } else {
+            //render show template with that campground
+            res.render("campgrounds/show", {campground: foundCampground});
+        }
+    });
+});
+```
+- As a security measure, we add `delete req.body.campground.rating;` in the campground update (PUT) route to protect the campground.rating field from manipulation, since we are passing the req.body.campground object to the Campground.findByIdAndUpdate() method.
+
+- As a bonus, I added logic to the campground DELETE route which will remove all the associated Comment and Review documents from the database when we delete the campground. We use the **$in** operator which finds all Comment and Review database entries which have ids contained in campground.comments and campground.reviews, and deletes them along with the associated campground that is getting removed. This is not crucial for the functionality to work, but we add it to clean up the database so there are no leftover unassociated comments or reviews in the database after the related campgroud gets deleted:
+
+```
+// DESTROY CAMPGROUND ROUTE
+router.delete("/:id", middleware.checkCampgroundOwnership, function (req, res) {
+    Campground.findById(req.params.id, function (err, campground) {
+        if (err) {
+            res.redirect("/campgrounds");
+        } else {
+            // deletes all comments associated with the campground
+            Comment.remove({"_id": {$in: campground.comments}}, function (err) {
+                if (err) {
+                    console.log(err);
+                    return res.redirect("/campgrounds");
+                }
+                // deletes all reviews associated with the campground
+                Review.remove({"_id": {$in: campground.reviews}}, function (err) {
+                    if (err) {
+                        console.log(err);
+                        return res.redirect("/campgrounds");
+                    }
+                    //  delete the campground
+                    campground.remove();
+                    req.flash("success", "Campground deleted successfully!");
+                    res.redirect("/campgrounds");
+                });
+            });
+        }
+    });
+});
+```
+
+Ian covers this topic in more depth in a video tutorial on his YouTube channel: [Cascade Delete with MongoDB
+](https://www.youtube.com/watch?v=5iz69Wq_77k)
+
+### 6) Updated app.js - see the code here: [app.js](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/app.js)
+
+We need to slightly alter the app.js file, to require the new routes.js file in our main application:
+
+```
+var commentRoutes    = require("./routes/comments"),
+    reviewRoutes     = require("./routes/reviews"),
+    campgroundRoutes = require("./routes/campgrounds"),
+    indexRoutes      = require("./routes/index")
+```
+Also, later in the app.js code, we add a line to use the reviewRoutes next to the other, existing routes:
+
+```
+app.use("/", indexRoutes);
+app.use("/campgrounds", campgroundRoutes);
+app.use("/campgrounds/:id/comments", commentRoutes);
+app.use("/campgrounds/:id/reviews", reviewRoutes);
+```
+
+### 7) New EJS views for the Review System: [views/reviews/](https://github.com/zarkomaslaric/yelpcamp-review-system/tree/master/views/reviews)
+
+- **reviews/new.ejs** is going to contain the form which a user needs to fill out to submit a new review. The first input is going to be a star rating radio button selection, where a user can choose from 1 to 5 stars. To keep the code DRY as possible, we use a neat .repeat() string method trick so we don't have to duplicate our Font-Awesome star icon code all the time. A user can also leave a text review in addition to the star rating.
+
+**A side note:** We have to add the Font Awesome CDN link in our [views/partials/header.ejs](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/views/partials/header.ejs)
+
+- **reviews/edit.ejs** has the form where we edit the review, which works on a similar pattern. One specific thing is that we use EJS logic to check the current **review.rating** value and add the **checked** attribute to the radio button (input element) based on that, so the current star rating is preselected when the page loads.
+
+- **reviews/index.ejs** is our reviews index page, where we list all the reviews for a specific campground.
+
+Check the code here: [views/reviews/index.ejs](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/views/reviews/index.ejs)
+
+We utilize the EJS logic to check if campground already has ratings or not, and give the appropriate output according to that. We use the **.toFixed(2)** method to round the average campground to two decimals. Also, you will see that the .repeat() method is again to make sure we output the correct number of orange stars and black stars, based on the campground rating.
+
+**Another side note:** We have to add the **.checked** CSS class to color the star orange in our [public/stylesheets/main.css](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/public/stylesheets/main.css)
+
+We also use the .some() method again to disable the 'Write a New Review' button if the user already created a review for the campground before.
+
+### 8) Changes to campgrounds EJS  views: [views/campgrounds/](https://github.com/zarkomaslaric/yelpcamp-review-system/tree/master/views/campgrounds)
+
+- **campgrounds/index.ejs**: [views/campgrounds/index.ejs](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/views/campgrounds/index.ejs)
+
+In the campgrounds/index.ejs file we will be adding similar logic like we did in the 
+reviews index page, where we want to check **campground.rating** to see if the campground has any reviews. If it does, we output the star icons, and if it doesn't we just print a small message indicating that there are no reviews for the campground.
+
+- **campgrounds/index.ejs**: [views/campgrounds/show.ejs](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/views/campgrounds/show.ejs)
+
+In the campground show page, we also repeat a similar logic like in the reviews index page (and the campgrounds index page above) to print the correct star rating of the campground.
+
+Then, we have a section to print the latest reviews for the campground, using slice to only get the 5 latest ones of the campgrounds.reviews array - `<% campground.reviews.slice(0, 5).forEach(function(review){ %>`
+
+Other logic is very similar to what we've already seen in the reviews index page.
+
+# Final words
+
+I hope you'll like this extra feature for YelpCamp! Make sure to check the full repository to review all code changes that needed to be done in order to implement it to our application: [https://github.com/zarkomaslaric/yelpcamp-review-system](https://github.com/zarkomaslaric/yelpcamp-review-system)
+
+Also, a lot of credits go to Ian Schoonover (check his website [devsprout.io](https://www.devsprout.io/)) whose previous code I've used as a reference when creating this tutorial!

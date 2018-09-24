@@ -13,3 +13,7 @@
 #delete-form {
     display: inline;
 }
+
+.checked {
+    color: orange;
+}

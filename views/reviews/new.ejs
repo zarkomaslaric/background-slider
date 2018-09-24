@@ -1,0 +1,55 @@
+<% include ../partials/header %>
+<div class="container">
+    <div class="row">
+        <h1 style="text-align: center">New Review: <%= campground.name %></h1>
+        <div style="width: 30%; margin: 25px auto;">
+            <form action="/campgrounds/<%= campground._id %>/reviews" method="POST">
+                <div class="form-group">
+                    <label for="rating">Leave a rating:</label>
+                    <fieldset class="starability-basic form-group" id="rating">
+                    <div>
+                    <input type="radio" id="first-rate5" name="review[rating]" value="5" checked />
+                    <label for="first-rate5" title="5 stars - Amazing">
+                        <%- '<span class="fa fa-star checked"></span>'.repeat(5) %>
+                    </label>
+                    </div>
+                    <div>
+                    <input type="radio" id="first-rate4" name="review[rating]" value="4" />
+                    <label for="first-rate4" title="4 stars - Very good">
+                        <%- '<span class="fa fa-star checked"></span>'.repeat(4) %>
+                    </label>
+                    </div>
+                    <div>
+                    <input type="radio" id="first-rate3" name="review[rating]" value="3" />
+                    <label for="first-rate3" title="3 stars - Average">
+                        <%- '<span class="fa fa-star checked"></span>'.repeat(3) %>
+                    </label>
+                    </div>
+                    <div>
+                    <input type="radio" id="first-rate2" name="review[rating]" value="2" />
+                    <label for="first-rate2" title="2 stars - Not good">
+                        <%- '<span class="fa fa-star checked"></span>'.repeat(2) %>
+                    </label>
+                    </div>
+                    <div>
+                    <input type="radio" id="first-rate1" name="review[rating]" value="1" />
+                    <label for="first-rate1" title="1 star - Terrible">
+                        <%- '<span class="fa fa-star checked"></span>'.repeat(1) %>
+                    </label>
+                </div>
+                        
+                    </fieldset>
+                </div>
+                <div class="form-group">
+                    <textarea class="form-control" type="text" name="review[text]" placeholder="Write a review for this campground..." rows="5"></textarea>
+                </div>
+                <div class="form-group">
+                    <button class="btn btn-primary btn-block">Submit a Review</button>
+                </div>
+            </form>
+            <a href="/campgrounds/<%= campground._id %>">Go Back</a>
+        </div>
+    </div>
+</div>
+<% include ../partials/footer %>
+

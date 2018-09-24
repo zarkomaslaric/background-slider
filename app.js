@@ -13,10 +13,11 @@ var express     = require("express"),
     
 //requiring routes
 var commentRoutes    = require("./routes/comments"),
+    reviewRoutes     = require("./routes/reviews"),
     campgroundRoutes = require("./routes/campgrounds"),
     indexRoutes      = require("./routes/index")
- 
-var url = process.env.DATABASEURL || "mongodb://localhost/yelp_camp_v10";
+
+var url = process.env.DATABASEURL || "mongodb://localhost/yelp_camp_review_system";
 mongoose.connect(url);
 
 app.use(bodyParser.urlencoded({extended: true}));
@@ -48,6 +49,7 @@ app.use(function(req, res, next){
 app.use("/", indexRoutes);
 app.use("/campgrounds", campgroundRoutes);
 app.use("/campgrounds/:id/comments", commentRoutes);
+app.use("/campgrounds/:id/reviews", reviewRoutes);
 
 
 app.listen(process.env.PORT, process.env.IP, function(){
