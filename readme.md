@@ -380,7 +380,7 @@ We also use the .some() method again to disable the 'Write a New Review' button 
 In the campgrounds/index.ejs file we will be adding similar logic like we did in the 
 reviews index page, where we want to check **campground.rating** to see if the campground has any reviews. If it does, we output the star icons, and if it doesn't we just print a small message indicating that there are no reviews for the campground.
 
-- **campgrounds/index.ejs**: [views/campgrounds/show.ejs](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/views/campgrounds/show.ejs)
+- **campgrounds/show.ejs**: [views/campgrounds/show.ejs](https://github.com/zarkomaslaric/yelpcamp-review-system/blob/master/views/campgrounds/show.ejs)
 
 In the campground show page, we also repeat a similar logic like in the reviews index page (and the campgrounds index page above) to print the correct star rating of the campground.
 
